@@ -1,0 +1,32 @@
+version: 2
+
+exposures:
+  - name: painel_safras_pdd
+    label: Painel de Safras - Qualidade de Originação (PDD)
+    type: dashboard
+    maturity: medium
+    url: https://bi.finvarejo.example/risco/safras
+    description: >
+      Painel para Risco de Crédito e Financeiro: curvas de vintage por safra,
+      marcos M03/M06/M09/M12 e ranking das safras no ano. Insumo para calibração da PDD.
+    depends_on:
+      - ref('mrt_risco__curva_safras')
+      - ref('mrt_risco__safras_inadimplencia_marcos')
+      - ref('mrt_risco__ranking_safras_m12')
+    owner:
+      name: Engenharia de Dados
+      email: engenharia.dados@finvarejo.example
+
+  - name: modelo_ml_risco_cliente
+    label: Modelo de ML - Risco de Cliente
+    type: ml
+    maturity: low
+    description: >
+      Modelo de Data Science que usa a lista de clientes de alto risco como público
+      e rótulo. SLA: mart atualizado até 7h em dia útil; dados point-in-time por data_referencia.
+    depends_on:
+      - ref('mrt_risco__clientes_alto_risco')
+      - ref('int_cliente__indicadores_credito')
+    owner:
+      name: Data Science - Risco
+      email: ds.risco@finvarejo.example

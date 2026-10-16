@@ -1,0 +1,92 @@
+# Databricks Asset Bundle da FinVarejo (AWS)
+#  - Serasa -> feature store (este arquivo): disparado pela chegada do arquivo
+#  - CRM batch e streaming (resources/crm.yml): batch disparado pelo MWAA, streaming contínuo
+# Deploy: databricks bundle deploy -t prod
+bundle:
+  name: finvarejo_dados
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Catálogo Unity Catalog (storage gerenciado em s3://finvarejo-lakehouse-<env>/)
+    default: finvarejo_dev
+  landing_path:
+    description: External location onde o Serasa (SFTP -> S3) deposita os CSVs
+    default: s3://finvarejo-landing-dev/serasa/score/
+  gold_path:
+    description: Prefixo S3 das tabelas Gold externas (também registradas no Glue)
+    default: s3://finvarejo-lakehouse-dev/gold/
+  glue_database:
+    default: finvarejo_gold_dev
+  alerta_email:
+    default: engenharia.dados@finvarejo.example
+
+resources:
+  pipelines:
+    serasa_bronze_silver:
+      name: serasa_bronze_silver_${bundle.target}
+      catalog: ${var.catalog}
+      schema: serasa
+      serverless: true
+      continuous: false
+      libraries:
+        - file:
+            path: src/pipeline_serasa.py
+      configuration:
+        landing_path: ${var.landing_path}
+        # pepper do hash de CPF vem do secret scope, nunca do código
+        cpf_pepper: "{{secrets/finvarejo-lgpd/cpf_pepper}}"
+
+  jobs:
+    serasa_diario:
+      name: serasa_diario_${bundle.target}
+      # Dispara quando o arquivo do dia chega (SLA de chegada Serasa: até 06:00 BRT)
+      trigger:
+        file_arrival:
+          url: ${var.landing_path}
+      max_concurrent_runs: 1
+      timeout_seconds: 5400
+      # SLA interno: feature table publicada até 07:30 -> alerta se o run passar de 45 min
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 2700
+      email_notifications:
+        on_failure: [ "${var.alerta_email}" ]
+        on_duration_warning_threshold_exceeded: [ "${var.alerta_email}" ]
+      tasks:
+        - task_key: bronze_silver
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.serasa_bronze_silver.id}
+
+        - task_key: gold_feature_table
+          depends_on: [ { task_key: bronze_silver } ]
+          notebook_task:
+            notebook_path: src/gold_feature_table.py
+            base_parameters:
+              catalog: ${var.catalog}
+              gold_path: ${var.gold_path}
+
+        - task_key: registrar_glue
+          depends_on: [ { task_key: gold_feature_table } ]
+          notebook_task:
+            notebook_path: src/registrar_glue.py
+            base_parameters:
+              catalog: ${var.catalog}
+              gold_path: ${var.gold_path}
+              glue_database: ${var.glue_database}
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+    variables:
+      catalog: finvarejo_prod
+      landing_path: s3://finvarejo-landing-prod/serasa/score/
+      gold_path: s3://finvarejo-lakehouse-prod/gold/
+      glue_database: finvarejo_gold

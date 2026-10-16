@@ -1,0 +1,87 @@
+version: 2
+
+sources:
+  - name: finvarejo
+    description: Base transacional FinVarejo (SQLite).
+    # Atualidade: o freshness nativo do dbt (loaded_at_field + warn_after/error_after)
+    # não funciona no dbt-sqlite (datas são texto, não timestamp). Localmente ele é
+    # substituído por tests/warn_fontes_desatualizadas.sql. Em produção:
+    #   loaded_at_field: _loaded_at
+    #   freshness: {warn_after: {count: 12, period: hour}, error_after: {count: 24, period: hour}}
+    schema: main
+    tables:
+      - name: cliente
+        description: Cadastro de clientes. Contém dados pessoais (LGPD).
+        columns:
+          - name: id_cliente
+            data_tests: [unique, not_null]
+          - name: email
+            meta: {pii: true}
+            data_tests: [unique, not_null]
+          - name: cpf
+            meta: {pii: true}
+            data_tests: [unique]
+          - name: nome
+            meta: {pii: true}
+
+      - name: produto_financeiro
+        columns:
+          - name: id_produto
+            data_tests: [unique, not_null]
+          - name: tipo
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["cartao", "emprestimo", "cdc", "seguro"]
+
+      - name: contrato
+        columns:
+          - name: id_contrato
+            data_tests: [unique, not_null]
+          - name: id_cliente
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('finvarejo', 'cliente')
+                    field: id_cliente
+          - name: data_contrato
+            data_tests: [not_null]
+          - name: status
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["ativo", "cancelado", "inadimplente", "quitado"]
+
+      - name: parcela
+        columns:
+          - name: id_parcela
+            data_tests: [unique, not_null]
+          - name: id_contrato
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('finvarejo', 'contrato')
+                    field: id_contrato
+          - name: status
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["paga", "em_aberto", "atrasada", "baixada"]
+
+      - name: lead_campanha
+        columns:
+          - name: id_lead
+            data_tests: [unique, not_null]
+          - name: id_cliente
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: source('finvarejo', 'cliente')
+                    field: id_cliente
+          - name: status_resposta
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["abriu", "clicou", "contratou", "ignorou"]

@@ -1,0 +1,161 @@
+version: 2
+
+# Contrato de dados dos marts de Risco: nomes e tipos de todas as colunas são
+# congelados. Com contract.enforced (var enforce_contracts, ver dbt_project.yml),
+# o dbt bloqueia o build se o SQL divergir do contrato. Uma mudança incompatível
+# deve virar nova versão do modelo (versions:), para não quebrar o painel de PDD.
+
+models:
+  - name: mrt_risco__curva_safras
+    config:
+      tags: ["pdd"]
+    description: >
+      Curva de inadimplência acumulada por safra trimestral e mês de vida (M01..M12).
+      Inadimplência = primeira parcela com status atrasada ou baixada. Denominador =
+      contratos não cancelados da safra. Marcos não maturados ficam nulos.
+    columns:
+      - name: safra
+        description: Trimestre de originação (AAAA-Tn).
+        data_type: text
+      - name: ano_safra
+        description: Ano de originação.
+        data_type: integer
+      - name: trimestre_safra
+        description: Trimestre de originação (1 a 4).
+        data_type: integer
+      - name: mes_vida
+        description: Mês de vida do contrato (meses comerciais de 30 dias).
+        data_type: integer
+      - name: marco
+        description: Rótulo do mês de vida (M01..M12).
+        data_type: text
+      - name: qtd_contratos
+        description: Contratos não cancelados originados na safra (denominador).
+        data_type: integer
+      - name: qtd_novos_inadimplentes
+        description: Contratos cuja primeira inadimplência ocorreu neste mês de vida.
+        data_type: integer
+      - name: qtd_inadimplentes_acumulado
+        description: Contratos que já inadimpliram até este mês de vida.
+        data_type: integer
+      - name: pct_inadimplencia_acumulada
+        description: "% de contratos da safra que já inadimpliram até este mês de vida. Nulo se não maturado."
+        data_type: real
+      - name: fl_maturado
+        description: 1 se todos os contratos da safra já atingiram este mês de vida na data de referência.
+        data_type: boolean
+    data_tests:
+      - unique_combination_safra_mes:
+          arguments:
+            columns: ["safra", "mes_vida"]
+
+  - name: mrt_risco__safras_inadimplencia_marcos
+    config:
+      tags: ["pdd"]
+    description: >
+      Visão transposta da curva de safras: uma linha por safra com o % acumulado de
+      contratos inadimplentes nos marcos M03, M06, M09 e M12.
+    columns:
+      - name: safra
+        description: Trimestre de originação (AAAA-Tn).
+        data_type: text
+        data_tests: [unique, not_null]
+      - name: ano_safra
+        description: Ano de originação.
+        data_type: integer
+      - name: trimestre_safra
+        description: Trimestre de originação (1 a 4).
+        data_type: integer
+      - name: qtd_contratos
+        description: Contratos não cancelados originados na safra.
+        data_type: integer
+      - name: pct_inad_m03
+        description: "% acumulado de contratos inadimplentes até o 3º mês de vida."
+        data_type: real
+      - name: pct_inad_m06
+        description: "% acumulado de contratos inadimplentes até o 6º mês de vida."
+        data_type: real
+      - name: pct_inad_m09
+        description: "% acumulado de contratos inadimplentes até o 9º mês de vida."
+        data_type: real
+      - name: pct_inad_m12
+        description: "% acumulado de contratos inadimplentes até o 12º mês de vida."
+        data_type: real
+      - name: qtd_inadimplentes_m12
+        description: Contratos que inadimpliram até o 12º mês de vida.
+        data_type: integer
+
+  - name: mrt_risco__ranking_safras_m12
+    config:
+      tags: ["pdd"]
+    description: >
+      Ranking das safras dentro de cada ano pelo % de inadimplência no M12
+      (1 = pior safra do ano) e desvio, em pontos percentuais, da média do ano.
+    columns:
+      - name: ano_safra
+        description: Ano de originação.
+        data_type: integer
+      - name: safra
+        description: Trimestre de originação (AAAA-Tn).
+        data_type: text
+        data_tests: [unique, not_null]
+      - name: trimestre_safra
+        description: Trimestre de originação (1 a 4).
+        data_type: integer
+      - name: qtd_contratos
+        description: Contratos não cancelados originados na safra.
+        data_type: integer
+      - name: qtd_inadimplentes_m12
+        description: Contratos que inadimpliram até o 12º mês de vida.
+        data_type: integer
+      - name: pct_inad_m12
+        description: "% acumulado de contratos inadimplentes até o 12º mês de vida."
+        data_type: real
+      - name: rank_m12_no_ano
+        description: Posição da safra no ano (1 = maior inadimplência no M12).
+        data_type: integer
+      - name: media_pct_m12_ano
+        description: Média simples do % M12 das safras do ano.
+        data_type: real
+      - name: desvio_pp_media_ano
+        description: "pct_inad_m12 - media_pct_m12_ano, em pontos percentuais."
+        data_type: real
+      - name: pct_m12_ano_ponderado
+        description: "% M12 da carteira do ano (ponderado pelo número de contratos). Referência para PDD."
+        data_type: real
+
+  - name: mrt_risco__clientes_alto_risco
+    description: >
+      Clientes de alto risco na data de referência: 2+ contratos ativos, ao menos uma
+      parcela com atraso > 30 dias vencida nos últimos 90 dias e renda declarada abaixo
+      da mediana da base. Insumo do modelo de ML de risco (ver exposure).
+    config:
+      tags: ["ml"]
+      meta:
+        lgpd:
+          contem_dados_pessoais: true
+          finalidade: "Gestão de risco de crédito e modelagem de risco"
+          base_legal: "Proteção do crédito (art. 7º, X)"
+          observacao: "Para treino de ML usar id_cliente pseudonimizado, sem nome"
+    columns:
+      - name: id_cliente
+        description: Chave do cliente (usar pseudonimizada no feature store).
+        data_type: integer
+        data_tests: [unique, not_null]
+      - name: nome
+        description: Nome do cliente (apenas para a lista operacional de Risco).
+        data_type: text
+        meta: {pii: true}
+      - name: score_interno
+        description: Score interno de crédito do cliente.
+        data_type: integer
+        data_tests: [not_null]
+      - name: qtd_contratos_ativos
+        description: Contratos com status ativo.
+        data_type: integer
+      - name: total_em_aberto
+        description: Soma de valor_parcela - valor_pago nas parcelas atrasadas ou em aberto (R$).
+        data_type: real
+      - name: data_referencia
+        description: Data de corte (point-in-time) dos indicadores.
+        data_type: date

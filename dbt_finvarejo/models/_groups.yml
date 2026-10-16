@@ -1,0 +1,12 @@
+version: 2
+
+groups:
+  - name: risco
+    owner:
+      name: Risco de Crédito
+      email: risco.credito@finvarejo.example
+
+  - name: marketing
+    owner:
+      name: CRM e Marketing
+      email: crm@finvarejo.example

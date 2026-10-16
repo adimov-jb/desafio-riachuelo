@@ -1,0 +1,15 @@
+# Ambiente Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Artefatos do dbt
+dbt_finvarejo/target/
+dbt_finvarejo/logs/
+dbt_finvarejo/dbt_packages/
+dbt_finvarejo/.user.yml
+
+# Saídas com dados pessoais (LGPD): só o gráfico é versionado
+output/*
+!output/score_mercado_por_canal.png

@@ -1,0 +1,70 @@
+name: finvarejo
+version: "1.0.0"
+config-version: 2
+profile: finvarejo
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Data de corte da base. Se nulo, usa a última data de pagamento observada.
+  # Em produção, com carga diária, seria current_date.
+  data_referencia: null
+
+  # --- Curva de safras (PDD) ---
+  # Status de parcela que caracterizam o evento de inadimplência
+  status_parcela_inadimplente: ["atrasada", "baixada"]
+  # Corte mínimo de dias de atraso (0 = regra do enunciado; 30/90 = over-30/over-90)
+  dias_atraso_minimo: 0
+  # Horizonte (em meses de vida) da curva de safra
+  horizonte_meses: 12
+
+  # --- Indicadores de cliente ---
+  # Regra de "cliente com contrato inadimplente":
+  #   status          -> só contrato com status 'inadimplente'
+  #   over90          -> status 'inadimplente' OU parcela baixada OU atraso > 90 dias
+  #   qualquer_atraso -> status 'inadimplente' OU qualquer parcela atrasada/baixada
+  regra_inadimplencia_cliente: over90
+  # Janela (dias) para o atraso recente
+  janela_atraso_recente_dias: 90
+  # Janela (meses) de engajamento em campanhas
+  janela_engajamento_meses: 6
+
+  # --- Item 1: campanha de reativação de cartão ---
+  reativacao_cartao:
+    dominios_email: ["gmail.com", "yahoo.com.br"]
+    data_inicio_originacao: "2021-01-01"
+    data_fim_originacao: "2023-12-31"
+    min_contratos_cartao: 2
+    max_contratos_cartao: 3
+
+  # --- Item 2: clientes de alto risco ---
+  alto_risco:
+    min_contratos_ativos: 2
+    dias_atraso_minimo: 30
+
+models:
+  finvarejo:
+    staging:
+      +materialized: view
+      +tags: ["staging"]
+    intermediate:
+      +materialized: view
+      +tags: ["intermediate"]
+    marts:
+      +materialized: table
+      # Contrato de dados (nomes e tipos nos .yml dos marts). O adapter dbt-sqlite não
+      # suporta contracts (só emite aviso), então o padrão local é false; em produção
+      # (Snowflake/BigQuery/Databricks): --vars "{enforce_contracts: true}".
+      +contract:
+        enforced: "{{ var('enforce_contracts', false) }}"
+      risco:
+        +group: risco
+        +tags: ["risco"]
+      marketing:
+        +group: marketing
+        +tags: ["marketing", "lgpd_pii"]

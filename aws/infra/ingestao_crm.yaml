@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Ingestão do CRM da FinVarejo: controle do export diário (DynamoDB), stream realtime
+  (Kinesis), entrega batch do webhook (Firehose -> S3), alarmes CloudWatch e orçamento.
+  MWAA, Glue job, Lambdas e API Gateway ficam em stacks próprias (ciclos de deploy distintos).
+
+Parameters:
+  Ambiente:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+  ShardsRealtime:
+    Type: Number
+    Default: 2
+    Description: >
+      Shards = max(pico MB/s / 1, pico registros/s / 1000) x 1,3 de folga.
+      Só eventos críticos entram aqui (~10-20% do volume do webhook).
+  EmailAlerta:
+    Type: String
+    Default: engenharia.dados@finvarejo.example
+  OrcamentoKinesisUSD:
+    Type: Number
+    Default: 300
+
+Resources:
+  # ---------- Export diário: estado durável e idempotência ----------
+  TabelaControleExport:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: crm_export_controle
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: export_date, AttributeType: S }
+      KeySchema:
+        - { AttributeName: export_date, KeyType: HASH }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true }
+
+  # ---------- Realtime: eventos críticos ----------
+  StreamRealtime:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: crm-eventos-realtime
+      StreamModeDetails: { StreamMode: PROVISIONED }
+      ShardCount: !Ref ShardsRealtime
+      RetentionPeriodHours: 24   # retenção estendida custa a mais; a cópia longa é a Bronze Delta
+      StreamEncryption: { EncryptionType: KMS, KeyId: alias/aws/kinesis }
+
+  # ---------- Webhook não crítico: Firehose -> S3 (sem shard-hours) ----------
+  BucketWebhookBatch:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub finvarejo-crm-webhook-batch-${Ambiente}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expira-apos-reconciliacao
+            Status: Enabled
+            ExpirationInDays: 30   # o export diário é a fonte autoritativa desses eventos
+
+  PapelFirehose:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: firehose.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref AWS::AccountId }
+      Policies:
+        - PolicyName: escrita-s3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:AbortMultipartUpload, s3:GetBucketLocation, s3:ListBucket]
+                Resource:
+                  - !GetAtt BucketWebhookBatch.Arn
+                  - !Sub "${BucketWebhookBatch.Arn}/*"
+
+  FirehoseWebhookBatch:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: crm-eventos-batch
+      DeliveryStreamType: DirectPut
+      DeliveryStreamEncryptionConfigurationInput: { KeyType: AWS_OWNED_CMK }
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt BucketWebhookBatch.Arn
+        RoleARN: !GetAtt PapelFirehose.Arn
+        Prefix: "webhook/dt=!{timestamp:yyyy-MM-dd}/"
+        ErrorOutputPrefix: "erros/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/"
+        BufferingHints: { IntervalInSeconds: 300, SizeInMBs: 128 }
+        CompressionFormat: GZIP
+
+  # ---------- Alertas ----------
+  TopicoAlerta:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub alerta-dados-crm-${Ambiente}
+      KmsMasterKeyId: alias/aws/sns
+      Subscription:
+        - { Protocol: email, Endpoint: !Ref EmailAlerta }
+
+  AlarmeExportNaoConcluido:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-export-nao-concluido-24h
+      AlarmDescription: SLA batch - nenhum export carregado no lakehouse nas últimas 24h.
+      Namespace: FinVarejo/CRM
+      MetricName: ExportConcluido
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching   # ausência de métrica = pipeline não rodou
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeLinkPertoDeExpirar:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-export-link-expirando
+      AlarmDescription: Restam menos de 6h de validade do link e a cópia ainda não terminou.
+      Namespace: FinVarejo/CRM
+      MetricName: ExportLinkHorasRestantes
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 6
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeWebhookExportAtrasado:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-export-webhook-atrasado
+      AlarmDescription: CRM levou mais de 8h para avisar que o export ficou pronto.
+      Namespace: FinVarejo/CRM
+      MetricName: ExportLatenciaWebhookMin
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 480
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeKinesisAtrasoConsumo:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-realtime-consumidor-atrasado
+      AlarmDescription: Consumidor do stream crítico mais de 60s atrás (antifraude/lakehouse).
+      Namespace: AWS/Kinesis
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Dimensions: [{ Name: StreamName, Value: !Ref StreamRealtime }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 60000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeKinesisThrottling:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-realtime-throttling-escrita
+      AlarmDescription: Escrita rejeitada por falta de shards -> aumentar ShardsRealtime.
+      Namespace: AWS/Kinesis
+      MetricName: WriteProvisionedThroughputExceeded
+      Dimensions: [{ Name: StreamName, Value: !Ref StreamRealtime }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeKinesisCapacidade:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-realtime-uso-acima-70pct
+      AlarmDescription: Uso de escrita acima de 70% da capacidade provisionada (1 MB/s por shard).
+      Metrics:
+        - Id: bytes
+          MetricStat:
+            Metric:
+              Namespace: AWS/Kinesis
+              MetricName: IncomingBytes
+              Dimensions: [{ Name: StreamName, Value: !Ref StreamRealtime }]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: uso
+          Expression: !Sub "100 * bytes / (300 * 1048576 * ${ShardsRealtime})"
+          Label: pct_capacidade_escrita
+          ReturnData: true
+      EvaluationPeriods: 3
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  AlarmeTipoEventoDesconhecido:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: crm-webhook-tipo-evento-desconhecido
+      AlarmDescription: CRM enviou tipo de evento fora do mapa de criticidade (revisar roteamento).
+      Namespace: FinVarejo/CRM
+      MetricName: EventoTipoDesconhecido
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref TopicoAlerta]
+
+  OrcamentoKinesis:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub crm-kinesis-${Ambiente}
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref OrcamentoKinesisUSD, Unit: USD }
+        CostFilters:
+          Service: [Amazon Kinesis]
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 80 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref EmailAlerta }]
+
+Outputs:
+  StreamRealtimeArn:
+    Value: !GetAtt StreamRealtime.Arn
+  FirehoseBatchArn:
+    Value: !GetAtt FirehoseWebhookBatch.Arn
+  TabelaControle:
+    Value: !Ref TabelaControleExport

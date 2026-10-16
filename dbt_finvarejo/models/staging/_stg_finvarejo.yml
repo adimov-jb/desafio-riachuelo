@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: stg_finvarejo__cliente
+    description: >
+      Clientes com e-mail normalizado (minúsculo, sem espaços) e domínio extraído.
+      Contém dados pessoais: não expor diretamente a consumidores de negócio.
+    config:
+      meta:
+        lgpd: {contem_dados_pessoais: true}
+    columns:
+      - name: id_cliente
+        data_tests: [unique, not_null]
+      - name: nome
+        meta: {pii: true}
+      - name: email
+        meta: {pii: true}
+      - name: cpf
+        meta: {pii: true}
+      - name: data_nascimento
+        meta: {pii: true}
+      - name: renda_declarada
+        meta: {pii: true}
+      - name: dominio_email
+        description: Parte do e-mail após o "@", usada para segmentação.
+
+  - name: stg_finvarejo__produto_financeiro
+    description: Catálogo de produtos financeiros. 1 linha por produto.
+    columns:
+      - name: id_produto
+        data_tests: [unique, not_null]
+
+  - name: stg_finvarejo__lead_campanha
+    description: Disparos de campanha e a resposta do cliente. 1 linha por lead.
+    columns:
+      - name: id_lead
+        data_tests: [unique, not_null]
+
+  - name: stg_finvarejo__contrato
+    description: Contratos com tipos e datas normalizados. 1 linha por contrato.
+    columns:
+      - name: id_contrato
+        data_tests: [unique, not_null]
+
+  - name: stg_finvarejo__parcela
+    description: Parcelas com tipos e datas normalizados. 1 linha por parcela.
+    columns:
+      - name: id_parcela
+        data_tests: [unique, not_null]

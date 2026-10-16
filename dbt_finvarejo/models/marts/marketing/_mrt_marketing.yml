@@ -1,0 +1,50 @@
+version: 2
+
+models:
+  - name: mrt_marketing__publico_reativacao_cartao
+    description: >
+      Público da campanha de reativação de cartão: clientes Gmail/Yahoo com 2 a 3
+      contratos de cartão originados em 2021-2023, sem contrato inadimplente
+      (regra over90: status inadimplente, parcela baixada ou atraso > 90 dias) e sem
+      clique/conversão em campanhas nos 6 meses anteriores à data de referência.
+      ATENÇÃO LGPD: contém dados pessoais. Entregar somente após aplicar a lista de
+      opt-out/consentimento e pelo canal aprovado (ver meta.lgpd).
+    config:
+      meta:
+        lgpd:
+          contem_dados_pessoais: true
+          finalidade: "Campanha de reativação de cartão por e-mail"
+          base_legal: "Legítimo interesse (art. 7º, IX) com LIA aprovado pelo DPO, ou consentimento (art. 7º, I)"
+          minimizacao: "Sem CPF, renda, score ou dados de crédito; apenas o necessário para o disparo"
+          pre_requisito: "Remover opt-outs e clientes sem consentimento antes da entrega"
+          retencao: "Descartar a lista em até 30 dias após o fim da campanha"
+          acesso: "Restrito ao time de CRM; entrega via plataforma de e-mail, nunca por planilha"
+    columns:
+      - name: id_cliente
+        description: Chave do cliente, para supressão de opt-out e rastreio de respostas.
+        data_type: integer
+        data_tests: [unique, not_null]
+      - name: nome
+        description: Nome do cliente (personalização do e-mail).
+        data_type: text
+        meta: {pii: true}
+      - name: email
+        description: E-mail normalizado (minúsculo).
+        data_type: text
+        meta: {pii: true}
+        data_tests: [unique, not_null]
+      - name: estado
+        description: UF do cliente.
+        data_type: text
+      - name: canal_aquisicao
+        description: Canal pelo qual o cliente foi adquirido.
+        data_type: text
+      - name: qtd_contratos_cartao
+        description: Contratos de cartão (não cancelados) originados no período.
+        data_type: integer
+      - name: valor_medio_contratado
+        description: Valor médio contratado nesses contratos de cartão (R$).
+        data_type: real
+      - name: data_referencia
+        description: Data de corte da base usada para gerar a lista.
+        data_type: date

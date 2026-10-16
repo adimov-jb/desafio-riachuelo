@@ -1,0 +1,11 @@
+finvarejo:
+  target: dev
+  outputs:
+    dev:
+      type: sqlite
+      threads: 1
+      database: main
+      schema: main
+      schemas_and_paths:
+        main: "{{ env_var('FINVAREJO_DB_PATH', '../FinVarejo.db') }}"
+      schema_directory: "."

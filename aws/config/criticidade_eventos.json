@@ -1,0 +1,22 @@
+{
+  "_descricao": "Roteamento do Webhook (Data Stream) do CRM por criticidade. Versionado e publicado no AWS AppConfig; a Lambda recarrega sem deploy. Tipos não listados vão para 'batch' e geram métrica EventoTipoDesconhecido.",
+  "versao": "2025-01-10",
+  "realtime": {
+    "pagamento": "antifraude e conciliação: pagamento confirmado/estornado",
+    "compra": "antifraude: transação no cartão/CDC",
+    "alteracao_cadastral": "antifraude: troca de e-mail/telefone/endereço precede tomada de conta",
+    "login": "antifraude: novo dispositivo/geolocalização",
+    "opt_out": "LGPD: descadastro deve parar disparos em minutos, não em D+1",
+    "consentimento": "LGPD: concessão/revogação de consentimento"
+  },
+  "batch": {
+    "sms_enviado": "engajamento: coberto pelo export diário",
+    "sms_entregue": "engajamento",
+    "push_enviado": "engajamento",
+    "push_aberto": "engajamento",
+    "email_aberto": "engajamento",
+    "email_clicado": "engajamento",
+    "pagina_visitada": "navegação",
+    "atributo_atualizado": "atributos de perfil não sensíveis"
+  }
+}

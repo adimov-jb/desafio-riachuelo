@@ -1,0 +1,59 @@
+# Jobs do CRM (incluídos por databricks.yml).
+resources:
+  jobs:
+    crm_export_bronze_silver:
+      # Sem agendamento próprio: disparado pelo MWAA (DatabricksRunNowOperator) após a cópia
+      name: crm_export_bronze_silver
+      max_concurrent_runs: 1
+      timeout_seconds: 14400
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 10800  # SLA: Bronze + Silver em até 3h após a cópia
+      email_notifications:
+        on_failure: [ "${var.alerta_email}" ]
+        on_duration_warning_threshold_exceeded: [ "${var.alerta_email}" ]
+      parameters:
+        - name: export_date
+          default: ""
+        - name: catalog
+          default: ${var.catalog}
+      job_clusters:
+        - job_cluster_key: crm_2tb
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: i4i.4xlarge   # NVMe local para shuffle do MERGE
+            autoscale: { min_workers: 8, max_workers: 40 }
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK   # batch tolera perder spot; reexecução é idempotente
+              first_on_demand: 1
+      tasks:
+        - task_key: bronze_silver
+          job_cluster_key: crm_2tb
+          notebook_task:
+            notebook_path: ../src/crm_export_bronze_silver.py
+
+    crm_webhook_stream:
+      name: crm_webhook_stream
+      # Streaming contínuo: o job reinicia sozinho em falha
+      continuous:
+        pause_status: UNPAUSED
+      email_notifications:
+        on_failure: [ "${var.alerta_email}" ]
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+      job_clusters:
+        - job_cluster_key: crm_stream
+          new_cluster:
+            spark_version: 15.4.x-scala2.12
+            node_type_id: m6i.xlarge
+            num_workers: 2
+            aws_attributes:
+              availability: ON_DEMAND   # streaming crítico não roda em spot
+      tasks:
+        - task_key: stream
+          job_cluster_key: crm_stream
+          notebook_task:
+            notebook_path: ../src/crm_stream_kinesis.py

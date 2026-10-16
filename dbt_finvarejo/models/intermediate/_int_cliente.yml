@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: int_cliente__indicadores_credito
+    description: >
+      Indicadores de crédito por cliente na data de referência: contratos ativos,
+      flag de inadimplência (regra parametrizada em regra_inadimplencia_cliente),
+      maior atraso recente, saldo em aberto e posição da renda frente à mediana.
+      Sem dados de identificação (nome, e-mail, CPF).
+    columns:
+      - name: id_cliente
+        data_tests: [unique, not_null]
+      - name: fl_inadimplente
+        description: 1 se o cliente tem algum contrato inadimplente pela regra configurada.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+                quote: false
+      - name: max_dias_atraso_recente
+        description: Maior dias_atraso entre as parcelas vencidas na janela recente (padrão 90 dias).
+      - name: total_em_aberto
+        description: Soma de valor_parcela - valor_pago nas parcelas atrasadas ou em aberto.
+
+  - name: int_cliente__engajamento_campanha
+    description: Engajamento do cliente em campanhas (cliques e conversões) na janela configurada.
+    columns:
+      - name: id_cliente
+        data_tests: [unique, not_null]

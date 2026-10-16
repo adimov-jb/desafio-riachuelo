@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: int_contrato__primeira_inadimplencia
+    description: >
+      Contratos elegíveis (não cancelados) com a safra de originação e o primeiro
+      evento de inadimplência (primeira parcela atrasada/baixada) e seu mês de vida.
+    columns:
+      - name: id_contrato
+        data_tests: [unique, not_null]
+      - name: safra
+        description: Trimestre de originação no formato AAAA-Tn.
+        data_tests: [not_null]
+      - name: mes_vida_inadimplencia
+        description: >
+          Meses comerciais (30 dias) entre a assinatura e o vencimento da primeira
+          parcela inadimplente. Nulo quando o contrato nunca inadimpliu.
