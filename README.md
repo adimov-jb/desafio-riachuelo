@@ -467,19 +467,6 @@ As saídas ficam em `output/`: top 10 em CSV, top 3 regiões em CSV, relatório 
 
 Os arquivos estão em [`databricks/`](databricks/), como um Databricks Asset Bundle: o job diário, o pipeline e os notebooks. Não havia workspace disponível, então o código foi validado apenas quanto à sintaxe (Python e YAML) e não foi executado.
 
-```mermaid
-flowchart LR
-    SFTP[Serasa SFTP] -->|D0 até 06:00| L[(S3 landing<br/>serasa/score/)]
-    L -->|Auto Loader<br/>file arrival| B[(Bronze<br/>CSV bruto + metadados<br/>CPF em claro, acesso restrito)]
-    B -->|expectations<br/>tokeniza CPF<br/>dedup| S[(Silver<br/>histórico completo<br/>cpf_token × data_ref × disponivel_em)]
-    C[(Silver core<br/>cliente SCD2 via CDC)] --> G
-    S -->|as-of join| G[(Gold<br/>features_cliente_serasa<br/>PK id_cliente, ts_feature TIMESERIES)]
-    G --> UC[Unity Catalog<br/>Feature Engineering]
-    G -->|Athena DDL<br/>table_type=DELTA| GL[AWS Glue Data Catalog<br/>+ Lake Formation]
-    UC --> DS[Treino / batch scoring<br/>Data Science]
-    GL --> AWS[Athena · SageMaker · QuickSight]
-```
-
 #### Camadas Bronze, Silver e Gold no S3 com Delta Lake
 
 | Camada | Conteúdo | Implementação |
@@ -573,31 +560,6 @@ Eu responderia ao cientista de dados assim:
 | Lakehouse Monitoring e alertas | [`databricks/src/crm_monitoramento.py`](databricks/src/crm_monitoramento.py) |
 | Jobs Databricks | [`databricks/resources/crm.yml`](databricks/resources/crm.yml) |
 | Decisão arquitetural | [`docs/adr/ADR-001-ingestao-crm-batch-e-streaming.md`](docs/adr/ADR-001-ingestao-crm-batch-e-streaming.md) |
-
-```mermaid
-flowchart LR
-    subgraph CRM
-      EX[Export Raw User Data<br/>1x/dia · link 24h · até 2 TB]
-      WH[Webhook Data Stream<br/>at-least-once · sem replay]
-    end
-    MWAA[MWAA<br/>00:15 UTC] -->|pede export<br/>Idempotency-Key| EX
-    EX -->|aviso 'pronto'| L1[API GW + Lambda<br/>valida HMAC]
-    L1 --> DDB[(DynamoDB<br/>controle por export_date)]
-    MWAA -.sensor.-> DDB
-    MWAA --> GLUE[Glue: cópia paralela<br/>retomável]
-    GLUE --> RAW[(S3 raw imutável<br/>export_date=…)]
-    MWAA --> DBX1[Databricks batch]
-    RAW --> DBX1 --> BB[(Bronze export)]
-    WH --> L2[API GW + Lambda<br/>HMAC + criticidade]
-    L2 -->|crítico| KDS[Kinesis Data Streams]
-    L2 -->|não crítico| FH[Firehose → S3]
-    KDS -->|enhanced fan-out| AF[Motor antifraude<br/>~200 ms]
-    KDS --> DBX2[Databricks streaming] --> BS[(Bronze webhook)]
-    BB --> SIL[(Silver única<br/>MERGE por event_id)]
-    BS --> SIL
-    SIL --> REC[Reconciliação diária<br/>% crítico visto no webhook]
-    SIL --> GLUECAT[Glue Data Catalog]
-```
 
 ### Item 1 — Pipeline batch do Export Raw User Data
 
